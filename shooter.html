@@ -19,6 +19,23 @@ canvas{display:block;border:1px solid #333}
 </head>
 <body>
 <canvas id="c" width="480" height="680"></canvas>
+<div id="nameOverlay" style="display:none;position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;">
+  <div style="background:#0a1020;border:1px solid #00d4ff55;border-radius:14px;
+    padding:36px 44px;text-align:center;color:#fff;font-family:sans-serif;min-width:300px">
+    <div id="nTitle" style="font-size:18px;letter-spacing:3px;color:#ffc820;margin-bottom:6px"></div>
+    <div id="nScore" style="font-size:13px;color:#888;margin-bottom:24px"></div>
+    <input id="nName" maxlength="12" placeholder="NAME（12文字まで）"
+      style="width:240px;background:#0d1a2e;border:1px solid #00d4ff66;color:#fff;
+      font-size:18px;padding:10px 14px;border-radius:8px;outline:none;
+      text-align:center;letter-spacing:2px;display:block;margin:0 auto 20px">
+    <button id="nOk"
+      style="background:#0d2a0d;border:1px solid #40c040;color:#40c040;
+      padding:10px 36px;font-size:15px;border-radius:8px;cursor:pointer;letter-spacing:3px">
+      REGISTER
+    </button>
+  </div>
+</div>
 <div id="touch">
   <div class="dpad">
     <span></span>
@@ -40,6 +57,32 @@ const W = 480, H = 680;
 const keys = {};
 document.addEventListener('keydown', e => { keys[e.code]=true;  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); });
 document.addEventListener('keyup',   e => { keys[e.code]=false; });
+
+// ── ゲームパッド ─────────────────────────────────────────
+const gpDriven = {};
+function pollGamepad(){
+  const GP_KEYS = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'];
+  for(const k of GP_KEYS){ if(gpDriven[k]){ keys[k]=false; } gpDriven[k]=false; }
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for(const pad of pads){
+    if(!pad) continue;
+    const set = code => { keys[code]=true; gpDriven[code]=true; };
+    const ax = pad.axes[0]||0, ay = pad.axes[1]||0;
+    if(ax < -0.3) set('ArrowLeft');
+    if(ax >  0.3) set('ArrowRight');
+    if(ay < -0.3) set('ArrowUp');
+    if(ay >  0.3) set('ArrowDown');
+    if(pad.buttons[12]?.pressed) set('ArrowUp');
+    if(pad.buttons[13]?.pressed) set('ArrowDown');
+    if(pad.buttons[14]?.pressed) set('ArrowLeft');
+    if(pad.buttons[15]?.pressed) set('ArrowRight');
+    // A/B/X/Y・十字上 → 射撃 / START → タイトル遷移
+    if(pad.buttons[0]?.pressed||pad.buttons[1]?.pressed||
+       pad.buttons[2]?.pressed||pad.buttons[3]?.pressed||
+       pad.buttons[9]?.pressed) set('Space');
+    break; // 最初のコントローラーだけ使用
+  }
+}
 // タッチ
 ['up','dn','lf','rt'].forEach(id=>{
   const el=document.getElementById(id);
@@ -54,6 +97,35 @@ if(fire_btn){
   fire_btn.addEventListener('touchend',  e=>{keys['Space']=false; e.preventDefault()},{passive:false});
 }
 
+// ── ランキング ───────────────────────────────────────────
+const RANK_KEY='shooter_hi';
+function getRanking(){try{return JSON.parse(localStorage.getItem(RANK_KEY)||'[]')}catch(e){return[]}}
+function addScore(name,score){
+  const r=getRanking();
+  r.push({name:(name||'PLAYER').slice(0,12),score,date:new Date().toLocaleDateString('ja-JP')});
+  r.sort((a,b)=>b.score-a.score);
+  const top=r.slice(0,10);
+  localStorage.setItem(RANK_KEY,JSON.stringify(top));
+  return top;
+}
+const nameOverlay=document.getElementById('nameOverlay');
+const nName=document.getElementById('nName');
+const nOk=document.getElementById('nOk');
+function showNameInput(score,onDone){
+  document.getElementById('nTitle').textContent=score>0?'◈ HI-SCORE ENTRY ◈':'GAME OVER';
+  document.getElementById('nScore').textContent=`SCORE: ${String(score).padStart(6,'0')}`;
+  nameOverlay.style.display='flex';
+  nName.value='';
+  setTimeout(()=>nName.focus(),50);
+  const submit=()=>{
+    nameOverlay.style.display='none';
+    addScore(nName.value.trim()||'PLAYER',score);
+    onDone();
+  };
+  nOk.onclick=submit;
+  nName.onkeydown=e=>{if(e.key==='Enter')submit();};
+}
+
 // ── 定数 ─────────────────────────────────────────────────
 const WPN_SINGLE=0, WPN_2WAY=1, WPN_3WAY=2, WPN_HOMING=3, WPN_LASER=4;
 const WPN_NAMES=['SINGLE','2-WAY','3-WAY','HOMING','LASER'];
@@ -61,7 +133,7 @@ const WPN_CLR  =['#50a0ff','#00d4ff','#32dc50','#ff3cc8','#ff9620'];
 const PUP_ATK=0, PUP_2WAY=1, PUP_3WAY=2, PUP_HOMING=3, PUP_LASER=4;
 const PUP_CLR  =['#ffe020','#00d4ff','#32dc50','#ff3cc8','#ff9620'];
 const PUP_NAMES=['ATK UP','2-WAY','3-WAY','HOMING','LASER'];
-const ST_TITLE=0, ST_PLAY=1, ST_CLEAR=2, ST_GAMEOVER=3;
+const ST_TITLE=0, ST_PLAY=1, ST_CLEAR=2, ST_GAMEOVER=3, ST_RANKING=4;
 
 function lerp(a,b,t){return a+(b-a)*t}
 function lerpClr(c1,c2,t){
@@ -202,9 +274,9 @@ class LaserBeam{
     this.dmgTick++;
     if(this.dmgTick>=3){
       this.dmgTick=0;
-      for(const e of this.getEnemies()){if(e.alive&&Math.abs(e.x-this.x)<18){e.hp-=8;if(e.hp<=0)e.alive=false}}
-      for(const c of this.getCrabs()){if(c.alive&&Math.abs(c.x-this.x)<22){c.hp-=8;if(c.hp<=0)c.alive=false}}
-      const boss=this.getBoss();if(boss&&boss.alive&&Math.abs(boss.x-this.x)<55)boss.hp-=12;
+      for(const e of this.getEnemies()){if(e.alive&&Math.abs(e.x-this.x)<18)e.hp-=16}
+      for(const c of this.getCrabs()){if(c.alive&&Math.abs(c.x-this.x)<22)c.hp-=16}
+      const boss=this.getBoss();if(boss&&boss.alive&&Math.abs(boss.x-this.x)<55)boss.hp-=24;
     }
   }
   draw(){
@@ -271,7 +343,7 @@ class Player{
         bullets.push(new Bullet(this.x-8,this.y-5,-spd*0.3,-spd*0.95,'#32dc50',dmg));
         bullets.push(new Bullet(this.x+8,this.y-5, spd*0.3,-spd*0.95,'#32dc50',dmg));this.shootCd=9;
       }else if(this.weapon===WPN_HOMING){
-        const tgts=()=>{const b=getBoss();return b?[...getEnemies(),b]:getEnemies()};
+        const tgts=()=>{const b=getBoss();return b?[...getEnemies(),...getCrabs(),b]:[...getEnemies(),...getCrabs()]};
         for(const dx of[-8,0,8])missiles.push(new HomingMissile(this.x+dx,this.y-10,tgts));
         this.shootCd=20;
       }else if(this.weapon===WPN_LASER){
@@ -568,8 +640,22 @@ class Game{
     this.particles=this.particles.filter(p=>p.update());
 
     for(const e of this.enemies)e.update(this.bullets);
+    for(const e of this.enemies){
+      if(e.hp<=0&&e.alive){
+        e.alive=false;this.score+=e.scoreVal;
+        for(let i=0;i<12;i++)this.particles.push(new Particle(e.x,e.y,e.color));
+        if(e.special!==null)this.powerups.push(new PowerUp(e.x,e.y,e.special));
+      }
+    }
     this.enemies=this.enemies.filter(e=>e.alive);
     for(const c of this.crabs)c.update(this.bullets);
+    for(const c of this.crabs){
+      if(c.hp<=0&&c.alive){
+        c.alive=false;this.score+=c.scoreVal;
+        for(let i=0;i<16;i++)this.particles.push(new Particle(c.x,c.y,c.color));
+        if(c.dropPup!==null)this.powerups.push(new PowerUp(c.x,c.y,c.dropPup));
+      }
+    }
     this.crabs=this.crabs.filter(c=>c.alive);
 
     if(this.boss){
@@ -680,6 +766,7 @@ class Game{
     if(this.state===ST_TITLE){this.drawTitle();return}
     if(this.state===ST_CLEAR){this.drawClear();return}
     if(this.state===ST_GAMEOVER){this.drawGameOver();return}
+    if(this.state===ST_RANKING){this.drawRanking();return}
 
     for(const p of this.particles)p.draw();
     for(const p of this.powerups) p.draw();
@@ -707,20 +794,54 @@ class Game{
     if(!this.bossTrig)fillText(`WAVE ${this.wave}/5`,W-55,H-20,'#888888',14);
   }
 
+  drawRanking(){
+    fillText('◈  HI-SCORE  RANKING  ◈',W/2,60,'#ffc820',22,true);
+    const r=getRanking();
+    if(r.length===0){
+      fillText('まだ記録がありません',W/2,340,'#444',16);
+    }else{
+      const rankCol=['#ffc820','#c0c0c0','#cd7f32'];
+      r.forEach((e,i)=>{
+        const y=120+i*50;
+        const col=rankCol[i]||'#6080a0';
+        ctx.globalAlpha=Math.max(0.4,1-i*0.05);
+        ctx.fillStyle=i%2===0?'rgba(255,255,255,0.04)':'rgba(0,0,0,0)';
+        ctx.fillRect(30,y-20,W-60,38);
+        fillText(`${i+1}`,72,y,col,17,true);
+        fillText(e.name,220,y,col,16,true);
+        fillText(String(e.score).padStart(6,'0'),W-80,y,col,16,true);
+        ctx.globalAlpha=0.3;
+        fillText(e.date,W-80,y+16,'#aaa',9);
+        ctx.globalAlpha=1;
+      });
+    }
+    if(Math.floor(this.titleBlink/30)%2===0)
+      fillText('PRESS  SPACE  TO  TITLE',W/2,H-40,'#888',16,true);
+  }
+
   drawTitle(){
-    fillText('VERTICAL SHOOTER',W/2,170,'#00d4ff',36,true);
-    fillText('縦スクロールシューティング',W/2,220,'#ffffff',16);
-    fillText('── 操作 ──',W/2,270,'#888888',15);
-    fillText('矢印キー: 移動',W/2,292,'#cccccc',15);
-    fillText('Z / SPACE: 射撃',W/2,312,'#cccccc',15);
-    fillText('── パワーアップ（特殊色の敵を倒す） ──',W/2,350,'#888888',14);
-    const items=[[PUP_ATK,'黄色敵'],[PUP_2WAY,'シアン敵'],[PUP_3WAY,'緑色敵'],[PUP_HOMING,'マゼンタ敵'],[PUP_LASER,'オレンジ敵']];
+    fillText('VERTICAL SHOOTER',W/2,80,'#00d4ff',34,true);
+    fillText('縦スクロールシューティング',W/2,122,'#ffffff',14);
+    const r=getRanking();
+    if(r.length>0){
+      fillText('◈  HI-SCORE  ◈',W/2,165,'#ffc820',14,true);
+      const rc=['#ffc820','#c0c0c0','#cd7f32'];
+      r.slice(0,5).forEach((e,i)=>{
+        const col=rc[i]||'#8090b0';
+        fillText(`${i+1}.  ${e.name.padEnd(12,' ')}  ${String(e.score).padStart(6,'0')}`,W/2,190+i*24,col,13);
+      });
+    }
+    const baseY=r.length>0?320:200;
+    fillText('── 操作 ──',W/2,baseY,'#888888',13);
+    fillText('矢印/スティック: 移動',W/2,baseY+22,'#cccccc',13);
+    fillText('Z / SPACE / Aボタン: 射撃',W/2,baseY+42,'#cccccc',13);
+    fillText('── パワーアップ（特殊色の敵を倒す） ──',W/2,baseY+72,'#888888',12);
+    const items=[[PUP_ATK,'黄色'],[PUP_2WAY,'シアン'],[PUP_3WAY,'緑'],[PUP_HOMING,'マゼンタ'],[PUP_LASER,'オレンジ']];
     items.forEach(([pt,cn],i)=>{
-      fillText(`${cn} → ${PUP_NAMES[pt]}`,W/2,376+i*22,PUP_CLR[pt],14);
-      glow(W/2-80,376+i*22,10,PUP_CLR[pt],0.4);
+      fillText(`${cn}敵 → ${PUP_NAMES[pt]}`,W/2,baseY+95+i*20,PUP_CLR[pt],12);
     });
     if(Math.floor(this.titleBlink/30)%2===0)
-      fillText('PRESS  SPACE  TO  START',W/2,600,'#ffc820',20,true);
+      fillText('PRESS  SPACE  TO  START',W/2,H-40,'#ffc820',20,true);
   }
 
   drawClear(){
@@ -728,20 +849,24 @@ class Game{
     fillText(`SCORE: ${String(this.score).padStart(6,'0')}`,W/2,310,'#ffffff',26);
     fillText('CONGRATULATIONS!',W/2,370,'#00d4ff',20);
     if(Math.floor(this.titleBlink/30)%2===0)
-      fillText('PRESS SPACE TO RETRY',W/2,450,'#cccccc',18);
+      fillText('PRESS SPACE → REGISTER SCORE',W/2,450,'#cccccc',16);
   }
 
   drawGameOver(){
     fillText('GAME  OVER',W/2,260,'#ff3232',42,true);
     fillText(`SCORE: ${String(this.score).padStart(6,'0')}`,W/2,330,'#ffffff',24);
     if(Math.floor(this.titleBlink/30)%2===0)
-      fillText('PRESS SPACE TO RETRY',W/2,410,'#888888',18);
+      fillText('PRESS SPACE → REGISTER SCORE',W/2,410,'#888888',16);
   }
 
   handleKey(code){
     if(code==='Space'||code==='KeyZ'){
       if(this.state===ST_TITLE){this.state=ST_PLAY;this.reset()}
-      else if(this.state===ST_CLEAR||this.state===ST_GAMEOVER){this.state=ST_TITLE}
+      else if(this.state===ST_CLEAR||this.state===ST_GAMEOVER){
+        const sc=this.score;
+        showNameInput(sc,()=>{this.state=ST_RANKING;});
+      }
+      else if(this.state===ST_RANKING){this.state=ST_TITLE}
     }
   }
 }
@@ -751,6 +876,7 @@ const game=new Game();
 document.addEventListener('keydown',e=>{game.handleKey(e.code)});
 
 function loop(){
+  pollGamepad();
   game.update();
   game.draw();
   requestAnimationFrame(loop);
