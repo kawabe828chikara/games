@@ -527,7 +527,7 @@ class Boss{
   constructor(){
     this.x=W/2;this.y=-80;this.hp=3000;this.maxHp=3000;
     this.alive=true;this._phase=1;this.t=0;this.shootCd=0;
-    this.entry=true;this.dirX=1;this.spdX=1.5;
+    this.entry=true;this.dirX=1;this.spdX=1.5;this.vy=0.8;
   }
   get phase(){return this._phase}
   updatePhase(){
@@ -540,6 +540,12 @@ class Boss{
     this.updatePhase();
     this.x+=this.spdX*this.dirX;
     if(this.x>W-60||this.x<60)this.dirX*=-1;
+    // 前後移動（速度ベース：フェーズが上がると徐々に加速）
+    const maxVY=this._phase===1?1.2:this._phase===2?2.4:3.6;
+    if(Math.abs(this.vy)<maxVY) this.vy+=(this.vy>0?1:-1)*0.03;
+    this.y+=this.vy;
+    if(this.y>190){this.y=190;this.vy=-Math.abs(this.vy);}
+    if(this.y< 75){this.y= 75;this.vy= Math.abs(this.vy);}
     this.shootCd--;
     if(this.shootCd<=0){
       if(this._phase===1){
@@ -609,7 +615,7 @@ class Game{
   reset(){
     this.player  =new Player();
     this.bullets =[];this.missiles=[];this.beams=[];
-    this.enemies =makeWave(1);
+    this.enemies =[];this.startDelay=120;
     this.crabs   =[];this.crabPending=false;this.pendingWave=0;
     this.powerups=[];this.particles=[];
     this.boss    =null;this.bossTrig=false;
@@ -624,6 +630,12 @@ class Game{
     this.titleBlink++;
     if(this.state!==ST_PLAY)return;
 
+    // スタート遅延
+    if(this.startDelay>0){
+      this.startDelay--;
+      this.msgText='GET  READY!';this.msgTimer=5;
+      if(this.startDelay===0){this.enemies.push(...makeWave(1));this.showMsg('WAVE  1',90);}
+    }
     const getEnemies=()=>this.enemies;
     const getBoss   =()=>this.boss;
     const getCrabs  =()=>this.crabs;
@@ -744,7 +756,7 @@ class Game{
       this.enemies.push(...makeWave(this.wave));
       this.showMsg(`WAVE ${this.wave}`,90);
     }
-    if(!this.bossTrig&&!this.crabPending&&this.enemies.length===0&&this.crabs.length===0){
+    if(!this.bossTrig&&!this.crabPending&&this.startDelay===0&&this.enemies.length===0&&this.crabs.length===0){
       if(this.wave===1||this.wave===3){
         const nc=this.wave===1?3:5;
         this.crabPending=true;this.pendingWave=this.wave+1;
@@ -860,6 +872,11 @@ class Game{
   }
 
   handleKey(code){
+    if(code==='Escape'){
+      nameOverlay.style.display='none';
+      if(this.state!==ST_TITLE){this.state=ST_TITLE;}
+      return;
+    }
     if(code==='Space'||code==='KeyZ'){
       if(this.state===ST_TITLE){this.state=ST_PLAY;this.reset()}
       else if(this.state===ST_CLEAR||this.state===ST_GAMEOVER){
